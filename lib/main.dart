@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -31,7 +30,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState, FrameVisionA
 
   // the image and metadata to show
   Image? _image;
-  Uint8List? _uprightImageBytes;
+  Uint8List? _imageData;
   ImageMetadata? _imageMeta;
   bool _processing = false;
   RecognizedText? _recognizedText;
@@ -41,7 +40,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState, FrameVisionA
   final Stopwatch _stopwatch = Stopwatch();
 
   MainAppState() {
-    Logger.root.level = Level.FINE;
+    Logger.root.level = Level.INFO;
     Logger.root.onRecord.listen((record) {
       debugPrint('${record.level.name}: ${record.time}: ${record.message}');
     });
@@ -63,7 +62,10 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState, FrameVisionA
     super.initState();
 
     // text recognition improves with a higher quality image
-    qualityIndex = 2;
+    qualityIndex = 4;
+
+    // set default resolution to be the largest possible for text recognition tasks
+    resolution = 720;
 
     // kick off the connection to Frame and start the app if possible
     tryScanAndConnectAndStart(andRun: true);
@@ -129,20 +131,9 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState, FrameVisionA
     _recognizedTextList.clear();
 
     try {
-      // NOTE: Frame camera is rotated 90 degrees clockwise,
-      // so we need to make it upright for share_plus sharing.
-      img.Image? imgIm = img.decodeJpg(imageData);
-      if (imgIm == null) {
-        // if the photo is malformed, just bail out
-        throw Exception('Error decoding photo');
-      }
-
-      // perform the rotation and re-encode as JPEG
-      imgIm = img.copyRotate(imgIm, angle: 270);
-      _uprightImageBytes = img.encodeJpg(imgIm);
+      _imageData = imageData;
 
       // update Widget UI
-      // For the widget we rotate it upon display with a transform, not changing the source image
       Image im = Image.memory(imageData, gaplessPlayback: true,);
 
       setState(() {
@@ -164,8 +155,9 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState, FrameVisionA
         // In both cases orientation metadata is passed to mlkit, so no need to bake in a rotation
         _stopwatch.reset();
         _stopwatch.start();
-        // Frame images are rotated 90 degrees clockwise
-        InputImage mlkitImage = ImageMlkitConverter.imageToMlkitInputImage(im, InputImageRotation.rotation90deg);
+        // Frame images are rotated 90 degrees clockwise usually
+        // but we got FrameVisionApp to pre-rotate them back since we're rotating them for sharing anyway
+        InputImage mlkitImage = ImageMlkitConverter.imageToMlkitInputImage(im, InputImageRotation.rotation0deg);
         _stopwatch.stop();
         _log.fine(() => 'NV21/BGRA8888 conversion took: ${_stopwatch.elapsedMilliseconds} ms');
 
@@ -259,8 +251,8 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState, FrameVisionA
             Expanded(
             child: GestureDetector(
               onTap: () {
-                if (_uprightImageBytes != null) {
-                  _shareImage(_uprightImageBytes, _recognizedTextList.join('\n'));
+                if (_imageData != null) {
+                  _shareImage(_imageData, _recognizedTextList.join('\n'));
                 }
               },
               child: CustomScrollView(
@@ -268,13 +260,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState, FrameVisionA
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Transform(
-                        alignment: Alignment.center,
-                        // images are rotated 90 degrees clockwise from the Frame
-                        // so reverse that for display
-                        transform: Matrix4.rotationZ(-pi*0.5),
-                        child: _image,
-                      ),
+                      child: _image,
                     ),
                   ),
                   if (_imageMeta != null)
@@ -282,7 +268,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState, FrameVisionA
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Column(children: [
-                          _imageMeta!,
+                          ImageMetadataWidget(meta: _imageMeta!),
                           const Divider()
                         ]),
                       ),
